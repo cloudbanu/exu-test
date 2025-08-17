@@ -1,133 +1,148 @@
-// Supabase configuration
-const SUPABASE_URL = 'https://wfbazlvgkqldorosrgie.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndmYmF6bHZna3FsZG9yb3NyZ2llIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0MjEzNDMsImV4cCI6MjA3MDk5NzM0M30.w4sGMvleVZaDt7EgVZJ_xZOeLk_ZJA5EectKpeLL2oE';
-
-// Initialize Supabase client (Fixed - use supabase instead of supabaseClient)
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// Global variables (Fixed - declare before any functions)
-let currentUser = null;
-let currentRole = null;
-
-// Wait for DOM to be fully loaded
+// Main application logic
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize the app after DOM is loaded
-    showHome();
-});
+    const loginScreen = document.getElementById('loginScreen');
+    const dashboard = document.getElementById('dashboard');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const roleSelect = document.getElementById('roleSelect');
+    const username = document.getElementById('username');
+    const password = document.getElementById('password');
+    
+    // Check if user is already logged in
+    const currentUser = getCurrentUser();
+    if (currentUser.id) {
+        showDashboard(currentUser);
+    }
 
-// Show sections
-function showHome() {
-    document.getElementById('homeSection').classList.remove('hidden');
-    document.getElementById('loginSection').classList.add('hidden');
-    document.getElementById('roleContent').classList.add('hidden');
-    document.getElementById('logoutBtn').style.display = 'none';
-}
+    loginBtn.addEventListener('click', handleLogin);
+    logoutBtn.addEventListener('click', logout);
 
-function showLogin(role) {
-    currentRole = role;
-    document.getElementById('homeSection').classList.add('hidden');
-    document.getElementById('loginSection').classList.remove('hidden');
-    document.getElementById('roleContent').classList.add('hidden');
-    document.getElementById('loginTitle').textContent = role.replace('_', ' ').toUpperCase() + ' Login';
-}
+    async function handleLogin() {
+        const role = roleSelect.value;
+        const usernameVal = username.value.trim();
+        const passwordVal = password.value.trim();
 
-// Login functionality
-document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('loginForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
-        
+        if (!role || !usernameVal || !passwordVal) {
+            showNotification('Please fill in all fields', 'error');
+            return;
+        }
+
         try {
-            const { data, error } = await supabase
-                .from('users')
-                .select('*')
-                .eq('username', username)
-                .eq('role', currentRole)
-                .single();
-                
-            if (error || !data) {
-                alert('Invalid credentials');
-                return;
-            }
+            let user = null;
             
-            // Simple password verification (in production, use proper hashing)
-            if (data.password_hash !== password) {
-                alert('Invalid credentials');
-                return;
-            }
-            
-            currentUser = data;
-            document.getElementById('loginSection').classList.add('hidden');
-            document.getElementById('roleContent').classList.remove('hidden');
-            document.getElementById('logoutBtn').style.display = 'block';
-            
-            // Load role-specific interface
-            switch(currentRole) {
+            switch (role) {
                 case 'admin':
-                    loadAdminInterface();
+                    user = await loginAdmin(usernameVal, passwordVal);
                     break;
                 case 'team_leader':
-                    loadTeamLeaderInterface();
+                    user = await loginTeamLeader(usernameVal, passwordVal);
                     break;
                 case 'invigilator':
-                    loadInvigilatorInterface();
+                    user = await loginInvigilator(usernameVal, passwordVal);
                     break;
                 case 'judge':
-                    loadJudgeInterface();
+                    user = await loginJudge(usernameVal, passwordVal);
                     break;
                 case 'announcer':
-                    loadAnnouncerInterface();
+                    // Announcer uses admin credentials for now
+                    user = await loginAdmin(usernameVal, passwordVal);
+                    if (user) user.role = 'announcer';
                     break;
             }
-            
+
+            if (user) {
+                setCurrentUser(user);
+                showDashboard(user);
+                showNotification('Login successful');
+            } else {
+                showNotification('Invalid credentials', 'error');
+            }
         } catch (error) {
             console.error('Login error:', error);
-            alert('Login failed');
+            showNotification('Login failed', 'error');
         }
-    });
+    }
+
+    async function loginAdmin(username, password) {
+        const { data, error } = await supabase
+            .from('admins')
+            .select('*')
+            .eq('username', username)
+            .eq('password', password)
+            .single();
+        
+        if (error || !data) return null;
+        return { ...data, role: 'admin' };
+    }
+
+    async function loginTeamLeader(teamName, password) {
+        const { data, error } = await supabase
+            .from('teams')
+            .select('*')
+            .eq('name', teamName)
+            .eq('password', password)
+            .eq('leader_access', true)
+            .single();
+        
+        if (error || !data) return null;
+        return { ...data, role: 'team_leader' };
+    }
+
+    async function loginInvigilator(username, password) {
+        const { data, error } = await supabase
+            .from('invigilators')
+            .select('*')
+            .eq('username', username)
+            .eq('password', password)
+            .single();
+        
+        if (error || !data) return null;
+        return { ...data, role: 'invigilator' };
+    }
+
+    async function loginJudge(username, password) {
+        const { data, error } = await supabase
+            .from('judges')
+            .select('*')
+            .eq('username', username)
+            .eq('password', password)
+            .single();
+        
+        if (error || !data) return null;
+        return { ...data, role: 'judge' };
+    }
+
+    function showDashboard(user) {
+        loginScreen.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        
+        document.getElementById('dashboardTitle').textContent = `${user.role.replace('_', ' ').toUpperCase()} Dashboard`;
+        document.getElementById('userInfo').textContent = `Welcome, ${user.name || user.username}`;
+        
+        // Load role-specific content
+        loadRoleContent(user);
+    }
+
+    function loadRoleContent(user) {
+        const content = document.getElementById('content');
+        
+        switch (user.role) {
+            case 'admin':
+                loadAdminContent(content);
+                break;
+            case 'team_leader':
+                loadTeamLeaderContent(content, user);
+                break;
+            case 'invigilator':
+                loadInvigilatorContent(content, user);
+                break;
+            case 'judge':
+                loadJudgeContent(content, user);
+                break;
+            case 'announcer':
+                loadAnnouncerContent(content);
+                break;
+        }
+    }
 });
 
-function logout() {
-    currentUser = null;
-    currentRole = null;
-    document.getElementById('username').value = '';
-    document.getElementById('password').value = '';
-    showHome();
-}
-
-// Utility functions
-function showAlert(message, type = 'info') {
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-    alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    `;
-    document.querySelector('.container').insertBefore(alertDiv, document.querySelector('.container').firstChild);
-    
-    setTimeout(() => {
-        alertDiv.remove();
-    }, 5000);
-}
-
-// Calculate grade from score
-function calculateGrade(score) {
-    if (score >= 90) return 'A+';
-    if (score >= 70) return 'A';
-    if (score >= 60) return 'B';
-    if (score >= 50) return 'C';
-    return 'F';
-}
-
-// Calculate points from grade
-async function calculatePoints(grade) {
-    const { data, error } = await supabase
-        .from('points')
-        .select('points')
-        .eq('type', 'grade')
-        .eq('description', grade)
-        .single();
-    
-    return data ? data.points : 0;
-}
